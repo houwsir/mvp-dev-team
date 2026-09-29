@@ -52,6 +52,21 @@ def _read(path: Path) -> str:
         return ""
 
 
+def _source_files(backend: Path) -> list[Path]:
+    """backend 下参与路由扫描的 Python 源文件（排除测试与缓存目录）。
+
+    注意：只按**相对 backend 的路径**判断，不能用绝对路径里的 "test" 关键字，
+    否则临时目录（如 pytest 的 tmp_path）会把整个项目误过滤掉。
+    """
+    out: list[Path] = []
+    for path in backend.rglob("*.py"):
+        rel = path.relative_to(backend)
+        if any(part in {"tests", "test", "__pycache__"} for part in rel.parts):
+            continue
+        out.append(path)
+    return out
+
+
 def backend_routes(backend: Path) -> set[str]:
     """从 FastAPI 源码中还原出路由集合（含 APIRouter prefix 与挂载 prefix）。
 
@@ -59,7 +74,7 @@ def backend_routes(backend: Path) -> set[str]:
     ``router``，若共用一张表就会互相覆盖归属前缀——这里按文件分别解析，
     再用 ``include_router(products.router, prefix="/api")`` 里的模块名回连挂载前缀。
     """
-    files = [p for p in backend.rglob("*.py") if not any("test" in part for part in p.parts)]
+    files = _source_files(backend)
     texts = {p: _read(p) for p in files}
 
     # 1) 每个文件里：APIRouter 变量 → 局部 prefix
@@ -116,10 +131,19 @@ def _join(prefix: str, path: str) -> str:
 
 
 def _norm(path: str) -> str:
-    """把路径参数归一化，便于比较：``/orders/{id}`` 与 ``/orders/${x}`` 都变成 ``/orders/<>``。"""
-    p = _PLACEHOLDER_RE.sub("<>", path.strip())
-    p = p.rstrip("/") or "/"
-    return p
+    """把路径归一化，便于比较。
+
+    * 丢掉查询串与 hash：``/orders?page=1`` → ``/orders``；
+    * 路径参数统一成 ``<>``：``/orders/{id}``、``/orders/123``、``/orders/${id}`` → ``/orders/<>``；
+    * 注意 ``/orders${qs}`` 这种「模板串拼在末尾」不是路径参数，应当整段丢掉。
+    """
+    p = path.strip().split("?")[0].split("#")[0]
+    # 只在 `${...}` / `{...}` 紧跟 `/` 时视为路径参数（用哨兵避免被下一步误删）
+    p = re.sub(r"/(\$\{[^}]*\}|\{[^}/]*\})", "/\x00", p)
+    # 其余残留占位符直接删掉（多为查询串拼接）
+    p = re.sub(r"\$\{[^}]*\}|\{[^}/]*\}|<[^/]*>", "", p)
+    p = p.replace("\x00", "<>").rstrip("/")
+    return p or "/"
 
 
 def frontend_routes(frontend: Path) -> set[str]:
@@ -153,6 +177,9 @@ def frontend_api_calls(frontend: Path) -> set[str]:
                 if raw.startswith(prefix):
                     raw = raw[len(prefix) :] or "/"
                     break
+            # 裸根路径（多半是 baseURL 常量本身）不作为接口调用比较
+            if raw in {"/", ""}:
+                continue
             calls.add(raw)
     return calls
 
@@ -160,9 +187,17 @@ def frontend_api_calls(frontend: Path) -> set[str]:
 # ---------------------------------------------------------------- Python 导入检查
 
 def python_local_import_errors(backend: Path) -> list[str]:
-    """检查 backend 内部相对本地包的导入是否指向真实存在的模块。"""
+    """检查 backend 内部相对本地包的导入是否指向真实存在的模块。
+
+    注意：Python 3 支持**命名空间包**（目录里没有 ``__init__.py`` 也能导入），
+    所以「目录存在且有 .py 文件」同样算合法，不能因为没有 ``__init__.py`` 就判缺陷。
+    """
     errors: list[str] = []
-    top_level = {p.name for p in backend.iterdir() if p.is_dir() and (p / "__init__.py").exists()}
+    top_level = {
+        p.name
+        for p in backend.iterdir()
+        if p.is_dir() and (p / "__init__.py").exists() or (p.is_dir() and any(p.glob("*.py")))
+    }
     if not top_level:
         return errors
 
@@ -183,8 +218,14 @@ def python_local_import_errors(backend: Path) -> list[str]:
                 if root not in top_level:
                     continue
                 rel = Path(*dotted.split("."))
-                if not (backend / rel).with_suffix(".py").exists() and not (backend / rel / "__init__.py").exists():
-                    errors.append(f"{path.relative_to(backend)} 引用了不存在的模块：{dotted}")
+                if (backend / rel).with_suffix(".py").exists():
+                    continue
+                # 命名空间包 / 普通包：目录下有 .py 文件即可
+                if (backend / rel).is_dir() and any((backend / rel).glob("*.py")):
+                    continue
+                if (backend / rel / "__init__.py").exists():
+                    continue
+                errors.append(f"{path.relative_to(backend)} 引用了不存在的模块：{dotted}")
     return sorted(set(errors))
 
 
@@ -311,8 +352,8 @@ def check_project(root: Path, prd: dict[str, Any], arch: dict[str, Any]) -> dict
     if layout:
         missing = []
         for item in layout:
-            clean = item.split(" ")[0].strip("`-*")
-            if clean.endswith("/") or _is_deploy_stage(clean):
+            clean = _layout_path(item)
+            if not clean or clean.endswith("/") or _is_deploy_stage(clean):
                 continue
             if not (root / clean).exists():
                 missing.append(clean)
@@ -323,6 +364,24 @@ def check_project(root: Path, prd: dict[str, Any], arch: dict[str, Any]) -> dict
             )
 
     return {"findings": findings, "facts": facts}
+
+
+def _layout_path(item: str) -> str:
+    """从交付清单的一行里抠出文件路径。
+
+    架构师常写成 ``backend/app/main.py：创建 FastAPI 应用`` 这种「路径 + 全角冒号 + 说明」，
+    粗暴按空格切会把说明一起当成路径，从而产生大量假缺陷。
+    """
+    s = str(item).strip().strip("`-*• ")
+    # 常见的「路径 / 说明」分隔符：全角冒号、半角冒号、破折号、括号、顿号
+    s = re.split(r"[：:（(【\[]|\s+[-—–]\s+|\s{2,}|[，、]", s)[0].strip()
+    if " " in s:
+        head = s.split(" ")[0]
+        if "/" in head or "." in head:
+            s = head
+    s = s.strip("`'\"-*• ")
+    # 只保留看起来像路径的项（含目录分隔符或扩展名）
+    return s if ("/" in s or "." in s) else ""
 
 
 def _strip_api(path: str) -> str:
