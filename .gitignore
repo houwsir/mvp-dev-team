@@ -1,0 +1,34 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- 环境变量 ----
+.env
+.env.local
+
+# ---- 工作流产出的项目 ----
+generated/
+output/
+runs/
+
+# ---- Node（生成的前端产物）----
+node_modules/
+*.tsbuildinfo
+
+# ---- 编辑器 / 系统 ----
+.DS_Store
+.idea/
+.vscode/
+*.swp

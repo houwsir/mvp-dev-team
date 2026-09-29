@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mvp-dev-team"
+version = "0.1.0"
+description = "MVP 开发专家团：基于 LangGraph 的 8 角色多智能体 MVP 开发工作流"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "mvp-dev-team" }]
+keywords = ["langgraph", "langchain", "multi-agent", "mvp", "ai-agents"]
+dependencies = [
+    "langgraph>=0.2.60",
+    "langchain-core>=0.3.30",
+    "langchain-openai>=0.2.14",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+# 生成产物（FastAPI 后端）与测试需要
+dev = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+mvp-team = "mvp_team.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
