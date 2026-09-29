@@ -51,6 +51,13 @@ def test_norm_colon_params_match_braces_params():
     assert _norm("/products/{product_id}/edit") == "/products/<>/edit"
 
 
+def test_norm_is_idempotent():
+    """归一化结果再次归一化必须保持不变，否则二次处理会造出 /products//edit 这种假路径。"""
+    for raw in ("/products/:id/edit", "/orders/${oid}", "/a?b=1", "/x/y"):
+        once = _norm(raw)
+        assert _norm(once) == once, raw
+
+
 def test_split_routes_handles_multiple_routes_in_one_field():
     assert _split_routes("/products/new 和 /products/:id/edit") == ["/products/new", "/products/<>/edit"]
     assert _split_routes("/dashboard") == ["/dashboard"]

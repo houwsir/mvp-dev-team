@@ -200,7 +200,22 @@ generated/<项目代号>/
 ### 4.4 产物落盘有协议、有护栏
 
 工程师通过 ```file:相对路径 代码块声明产物，解析器只认带路径的块（普通示例代码块会被忽略），
-落盘前还会校验路径不能逃出输出目录。
+落盘前还会校验路径不能逃出输出目录。测试工程师越界写 `backend/` 之外的目录也会被拦下并告警。
+
+### 4.5 交付自检补上质量门的盲区
+
+质量门跑在运维工程师**之前**，所以它验证不了「Makefile 里 `bash deploy/start.sh` 指向的脚本
+是否真的存在」这类问题——这正是实际项目里最常见的交付事故。
+
+因此 `devops_docs` 节点会在最后跑一遍**交付一致性自检**（`tools/delivery_check.py`）：
+
+- Makefile 引用的仓库内路径是否存在；
+- Makefile 调用的 `npm run <script>` 是否真的在 `package.json` 里定义；
+- `docker-compose.yml` 的 dockerfile / context 是否指向真实文件；
+- README 里以反引号标注的仓库内路径是否存在；
+- 必备交付物是否齐全。
+
+结论写入产物目录的 `docs/DELIVERY_CHECK.md`。
 
 ---
 
@@ -220,10 +235,14 @@ mvp-dev-team/
 │   └── tools/
 │       ├── codeblocks.py      # ```file: 解析与安全落盘
 │       ├── jsonx.py           # 稳健 JSON 抽取（四层兜底）
-│       ├── static_checks.py   # 确定性静态体检
+│       ├── static_checks.py   # 确定性静态体检（契约/路由/依赖/导入）
+│       ├── delivery_check.py  # 交付一致性自检（Makefile / compose / README）
 │       └── runner.py          # 子进程执行 pytest / npm build
-├── tests/                     # 工作流引擎自身的测试
-└── examples/                  # 示例运行脚本
+├── scripts/verify.py          # 对已有产物做独立复检（不调用模型）
+├── tests/                     # 工作流引擎自身的测试（27 项）
+└── examples/
+    ├── run_demo.sh            # 一键复现示例
+    └── mini-shop-admin/       # 真实跑出来的电商后台 MVP（可直接启动）
 ```
 
 ---

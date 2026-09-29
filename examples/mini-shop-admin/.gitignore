@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 环境变量
+.env
+.env.local
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/

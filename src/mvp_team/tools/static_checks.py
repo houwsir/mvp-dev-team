@@ -130,24 +130,31 @@ def _join(prefix: str, path: str) -> str:
     return full.rstrip("/") or "/"
 
 
+_PARAM = "<>"
+_SENTINEL = "\x00"
+
+
 def _norm(path: str) -> str:
     """把路径归一化，便于比较。
 
     * 丢掉查询串与 hash：``/orders?page=1`` → ``/orders``；
-    * 路径参数统一成 ``<>``：``/orders/{id}``、``/orders/123``、``/orders/${id}`` → ``/orders/<>``；
-    * 注意 ``/orders${qs}`` 这种「模板串拼在末尾」不是路径参数，应当整段丢掉。
+    * 路径参数统一成 ``<>``：``/orders/{id}``、``/orders/123``、``/orders/${id}``、
+      ``/orders/:id`` → ``/orders/<>``；
+    * ``/orders${qs}`` 这种「模板串拼在末尾」不是路径参数，应当整段丢掉。
+
+    归一化结果**必须幂等**——`check_project` 会在已归一化的值上再调用一次，
+    所以要先把已有的 ``<>`` 保护起来，否则末尾清理会把 ``>`` 吃掉。
     """
-    p = path.strip().split("?")[0].split("#")[0]
-    # 只在 `${...}` / `{...}` / `:param` 紧跟 `/` 时视为路径参数（用哨兵避免被下一步误删）
-    p = re.sub(r"/(\$\{[^}]*\}|\{[^}/]*\}|:[A-Za-z_]\w*|\*)", "/\x00", p)
-    # 其余残留占位符直接删掉（多为查询串拼接）
-    p = re.sub(r"\$\{[^}]*\}|\{[^}/]*\}|<[^/]*>", "", p)
-    # 模板串里嵌套了大括号/括号时，末尾常残留 ) } , 之类的碎片
+    p = str(path).strip().split("?")[0].split("#")[0]
+    p = p.replace(_PARAM, _SENTINEL)
+    # 只在占位符紧跟 `/` 时视为路径参数
+    p = re.sub(r"/(\$\{[^}]*\}|\{[^}/]*\}|:[A-Za-z_]\w*|\*)", "/" + _SENTINEL, p)
+    # 其余残留占位符直接删掉（多为查询串或模板串拼接）
+    p = re.sub(r"\$\{[^}]*\}|\{[^}/]*\}|<(?!>)[^/]*>", "", p)
+    # 模板串里嵌套大括号被截断时，末尾常残留 ) } , 之类的碎片
     p = re.sub(r"[\s)\]}>'\"`,;:]+$", "", p)
-    # 未闭合的 `${...` 尾巴（嵌套模板串被截断）也一并丢掉
     p = re.sub(r"\$\{[^}]*$", "", p)
-    p = p.replace("\x00", "<>").rstrip("/")
-    return p or "/"
+    return p.replace(_SENTINEL, _PARAM).rstrip("/") or "/"
 
 
 def _split_routes(value: str) -> list[str]:

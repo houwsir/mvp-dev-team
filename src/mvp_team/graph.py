@@ -154,6 +154,7 @@ def run_workflow(
     config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 60}
 
     final: dict[str, Any] = dict(initial)
+    collected_events: list[Any] = []
     for chunk in app.stream(initial, config=config, stream_mode="updates"):
         for node_name, update in chunk.items():
             if not isinstance(update, dict):
@@ -161,6 +162,7 @@ def run_workflow(
             for key, value in update.items():
                 if key == "events":
                     for e in value:
+                        collected_events.append(e)
                         if on_event:
                             on_event({"node": node_name, "event": e})
                     continue
@@ -168,4 +170,6 @@ def run_workflow(
                     final[key] = list(final.get(key, [])) + list(value)
                 else:
                     final[key] = value
+    # 事件流同样并入最终状态，便于 --json 摘要与外部系统消费
+    final["events"] = collected_events
     return final  # type: ignore[return-value]
