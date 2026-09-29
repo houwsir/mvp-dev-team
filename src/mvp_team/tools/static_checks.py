@@ -138,12 +138,27 @@ def _norm(path: str) -> str:
     * 注意 ``/orders${qs}`` 这种「模板串拼在末尾」不是路径参数，应当整段丢掉。
     """
     p = path.strip().split("?")[0].split("#")[0]
-    # 只在 `${...}` / `{...}` 紧跟 `/` 时视为路径参数（用哨兵避免被下一步误删）
-    p = re.sub(r"/(\$\{[^}]*\}|\{[^}/]*\})", "/\x00", p)
+    # 只在 `${...}` / `{...}` / `:param` 紧跟 `/` 时视为路径参数（用哨兵避免被下一步误删）
+    p = re.sub(r"/(\$\{[^}]*\}|\{[^}/]*\}|:[A-Za-z_]\w*|\*)", "/\x00", p)
     # 其余残留占位符直接删掉（多为查询串拼接）
     p = re.sub(r"\$\{[^}]*\}|\{[^}/]*\}|<[^/]*>", "", p)
+    # 模板串里嵌套了大括号/括号时，末尾常残留 ) } , 之类的碎片
+    p = re.sub(r"[\s)\]}>'\"`,;:]+$", "", p)
+    # 未闭合的 `${...` 尾巴（嵌套模板串被截断）也一并丢掉
+    p = re.sub(r"\$\{[^}]*$", "", p)
     p = p.replace("\x00", "<>").rstrip("/")
     return p or "/"
+
+
+def _split_routes(value: str) -> list[str]:
+    """PRD 的 route 字段偶尔会写多条路由，例如 ``/products/new 和 /products/:id/edit``。"""
+    parts = re.split(r"\s*(?:和|或|以及|、|,|，|;|；|\|)\s*", str(value))
+    out: list[str] = []
+    for part in parts:
+        token = _norm(part)
+        if token.startswith("/") and token != "/":
+            out.append(token)
+    return out
 
 
 def frontend_routes(frontend: Path) -> set[str]:
@@ -283,7 +298,9 @@ def check_project(root: Path, prd: dict[str, Any], arch: dict[str, Any]) -> dict
         )
 
     # 3) 前端路由 vs PRD 页面
-    prd_routes = {_norm(p.get("route", "")) for p in prd.get("pages", []) if p.get("route")}
+    prd_routes: set[str] = set()
+    for page in prd.get("pages", []):
+        prd_routes.update(_split_routes(page.get("route", "")))
     fe_routes: set[str] = set()
     if frontend.exists():
         fe_routes = {_norm(r) for r in frontend_routes(frontend)}

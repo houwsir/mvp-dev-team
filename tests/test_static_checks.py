@@ -12,6 +12,7 @@ from mvp_team.tools.static_checks import (
     _is_deploy_stage,
     _layout_path,
     _norm,
+    _split_routes,
     backend_routes,
     check_project,
     python_local_import_errors,
@@ -40,7 +41,20 @@ def test_norm_path_params():
 def test_norm_drops_trailing_template_concat():
     # `/orders${qs}` 是「路径 + 查询串拼接」，不是路径参数
     assert _norm("/orders${qs}") == "/orders"
+    assert _norm('/orders${qs ? `?${page}` : ""}') == "/orders"
+    assert _norm("/products)}") == "/products"
     assert _norm("/") == "/"
+
+
+def test_norm_colon_params_match_braces_params():
+    assert _norm("/products/:product_id/edit") == "/products/<>/edit"
+    assert _norm("/products/{product_id}/edit") == "/products/<>/edit"
+
+
+def test_split_routes_handles_multiple_routes_in_one_field():
+    assert _split_routes("/products/new 和 /products/:id/edit") == ["/products/new", "/products/<>/edit"]
+    assert _split_routes("/dashboard") == ["/dashboard"]
+    assert _split_routes("") == []
 
 
 # ------------------------------------------------------------------ 交付清单解析
