@@ -27,10 +27,12 @@ def make_nodes(llm: Any, settings: Any) -> dict[str, Any]:
         user = (
             memory_block("项目简报", state.get("brief"))
             + memory_block("技术方案", state.get("architecture"))
+            + memory_block("代码级契约", state.get("contract"))
             + memory_block("测试结论", state.get("test_report"))
             + "\n## 磁盘上真实存在的文件（以此为准，不要臆造路径）\n"
             + (layout or "- （无）")
-            + "\n\n请输出部署与启动相关的全部文件。"
+            + "\n\n请核对 `deploy/` 与 `Makefile` 是否与上面的真实入口一致，"
+            "不一致就修正；然后补全/更新根目录 `README.md`。"
         )
         text = llm.say(ROLE, SYSTEM_DEVOPS, user)
         files, warnings = persist_generated(state, text, ROLE)
@@ -133,8 +135,70 @@ def make_nodes(llm: Any, settings: Any) -> dict[str, Any]:
             )
         )
 
-        update: dict[str, Any] = {"docs_files": new_docs, "artifacts": list(new_docs), "events": events}
-        update["run_log"] = [f"[devops] delivery-check -> {len(findings)} findings"]
+        # ---- 交付状态：质量门未通过就必须显式标注，绝不静默当成功交付 ----
+        passed = bool(state.get("qa_passed"))
+        delivery_status = "ok" if passed else "risk"
+        report_data = state.get("test_report") or {}
+        smoke = state.get("smoke_report") or {}
+
+        if smoke:
+            smoke_line = "✅ 通过" if smoke.get("ok") else "❌ 未通过"
+        else:
+            smoke_line = "（未执行）"
+
+        status_lines = [
+            "# 交付状态",
+            "",
+            f"- 结论：{'✅ **通过质量门**' if passed else '⚠️ **未通过质量门（带风险交付）**'}",
+            f"- 质量门轮次：{state.get('qa_round', 0)}",
+            f"- 测试结论：{report_data.get('verdict', '-')}",
+            f"- 需要返工：{report_data.get('rework_for', 'none')}",
+            f"- 冒烟测试：{smoke_line}",
+            f"- 交付自检不一致项：{len(findings)}（其中 high {len(high)}）",
+            "",
+        ]
+        if not passed:
+            status_lines += [
+                "## 未通过原因",
+                "",
+                str(report_data.get("summary", "") or "-"),
+                "",
+                "## 剩余缺陷",
+                "",
+            ]
+            for item in (report_data.get("findings") or [])[:20]:
+                status_lines.append(
+                    f"- [{item.get('severity')}] `{item.get('where')}` {item.get('issue')}"
+                )
+            status_lines += [
+                "",
+                "> 本项目为**带风险交付**：返工轮次已用尽但质量门仍未放行。",
+                "> 上方缺陷未修复，请勿直接用于生产环境。",
+                "",
+            ]
+
+        status_path = root / "docs" / "DELIVERY_STATUS.md"
+        write_text(status_path, "\n".join(status_lines))
+        new_docs.append(artifact_for(status_path, root, ROLE, state.get("project_name", "")))
+        events.append(
+            Event(
+                role=ROLE,
+                title="🚦 交付状态已判定",
+                detail="✅ 通过质量门" if passed else "⚠️ 未通过质量门（带风险交付）",
+                status="done" if passed else "fail",
+            )
+        )
+
+        update: dict[str, Any] = {
+            "docs_files": new_docs,
+            "artifacts": list(new_docs),
+            "events": events,
+            "delivery_status": delivery_status,
+        }
+        update["run_log"] = [
+            f"[devops] delivery-check -> {len(findings)} findings",
+            f"[devops] delivery-status -> {delivery_status}",
+        ]
         return update
 
     return {"devops_deploy": devops_deploy, "devops_docs": devops_docs}

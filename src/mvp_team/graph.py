@@ -12,6 +12,8 @@
              ▼
     │ pm_analyze       │  📋 产品经理 → PRD
              ▼
+    │ scaffold_baseline│  🧱 工程骨架（不走模型）：构建配置 / 数据库底座 /
+             ▼                测试脚手架 / 部署脚本，并冻结代码级契约
         ╭────┴────╮   ←── 并行扇出（同一个 superstep）
         ▼         ▼
    architect   ui_design      🏛️ 技术方案 + API 契约 ／ 🎨 设计规范
@@ -22,16 +24,16 @@
         ╰────┬────╯
              ▼
       ┌──────────────┐
-      │   qa_test    │  🔍 质量门：真跑 pytest + 静态体检
-      └──────┬───────┘
+      │   qa_test    │  🔍 质量门四道证据：契约一致性 → 静态体检 →
+      └──────┬───────┘     真跑 pytest → 真启动服务冒烟打接口
              ▼
       ┌──────────────┐   未通过且未超轮数 → 打回工程师返工
       │ route_after  │──────────────────────────┐
       └──────┬───────┘                          │
              ▼ 通过                              │
-      devops_deploy  🚀 部署与一键启动            │
+      devops_deploy  🚀 部署核对                │
              ▼                                  │
-      devops_docs    📖 运行手册                 │
+      devops_docs    📖 运行手册 + 交付自检 + 交付状态
              ▼                                  │
       director_review 🎬 验收交付                │
              ▼                                  │
@@ -63,7 +65,8 @@ def route_after_qa(state: TeamState, settings: Settings) -> str | list[Send]:
 
     * 通过 → 进入部署阶段；
     * 未通过且还有返工额度 → 用 Send 把任务**并发送回**对应工程师；
-    * 未通过但额度用尽 → 带风险继续部署（并把结论写进交付说明）。
+    * 未通过但额度用尽 → 带风险继续部署——此时 `delivery_status` 会被标为 `risk`，
+      交付文档与事件流都会明确写出「未通过质量门」，不会静默当成功交付。
     """
     passed = bool(state.get("qa_passed"))
     rounds = int(state.get("qa_round") or 0)
@@ -102,9 +105,14 @@ def build_graph(settings: Settings, llm: TeamLLM | None = None, checkpointer: An
     graph.add_edge("director_brief", "director_plan")
     graph.add_edge("director_plan", "pm_analyze")
 
-    # ---- 并行扇出：PRD 完成后，架构与设计同时开工（同一 superstep）----
-    graph.add_edge("pm_analyze", "architect_design")
-    graph.add_edge("pm_analyze", "ui_design")
+    # ---- 工程骨架：在架构与设计开工前，用确定性代码把工程基线铺好 ----
+    #      这样所有下游角色都能看到真实的文件树，不再臆造路径；
+    #      骨架导出的符号（get_settings / Base / get_db / client fixture）即代码级契约。
+    graph.add_edge("pm_analyze", "scaffold_baseline")
+
+    # ---- 并行扇出：骨架就绪后，架构与设计同时开工（同一 superstep）----
+    graph.add_edge("scaffold_baseline", "architect_design")
+    graph.add_edge("scaffold_baseline", "ui_design")
 
     # ---- 菱形汇聚：两位工程师都必须等到「架构 + 设计」都完成 ----
     graph.add_edge("architect_design", "backend_dev")

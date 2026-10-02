@@ -143,18 +143,17 @@ def test_deploy_stage_files_excluded_from_quality_gate():
 
 
 def test_check_project_clean_on_consistent_skeleton(tmp_path: Path):
+    """工程骨架 + 一致的业务实现 → 静态体检应当零缺陷。
+
+    骨架文件由 ``write_scaffold`` 铺，这正是真实运行时 `scaffold_baseline` 节点做的事。
+    """
+    from mvp_team.tools.scaffold import write_scaffold
+
     root = tmp_path / "demo"
-    _write(root / "backend" / "app" / "__init__.py", "")
+    write_scaffold(root)
     _write(
         root / "backend" / "app" / "main.py",
         "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get('/api/health')\ndef h(): ...\n",
-    )
-    _write(root / "backend" / "requirements.txt", "fastapi\n")
-    _write(
-        root / "frontend" / "package.json",
-        '{"scripts": {"dev": "vite", "build": "vite build"},'
-        ' "dependencies": {"react": "^18", "react-dom": "^18"},'
-        ' "devDependencies": {"vite": "^5", "typescript": "^5"}}',
     )
     _write(
         root / "frontend" / "src" / "App.tsx",
@@ -164,4 +163,17 @@ def test_check_project_clean_on_consistent_skeleton(tmp_path: Path):
     prd = {"pages": [{"route": "/dashboard"}]}
     arch = {"api_contract": [{"path": "/api/health"}], "directory_layout": ["backend/app/main.py：入口"]}
     result = check_project(root, prd, arch)
-    assert result["findings"] == []
+    assert result["findings"] == [], result["findings"]
+
+
+def test_check_project_flags_missing_skeleton(tmp_path: Path):
+    """骨架底座被删除时必须报 high —— 那是新加的契约完整性检查。"""
+    from mvp_team.tools.scaffold import write_scaffold
+
+    root = tmp_path / "demo"
+    write_scaffold(root)
+    (root / "backend" / "app" / "database.py").unlink()
+
+    result = check_project(root, {"pages": []}, {"api_contract": []})
+    issues = [f["issue"] for f in result["findings"]]
+    assert any("骨架底座文件缺失" in i for i in issues), issues

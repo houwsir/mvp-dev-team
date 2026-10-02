@@ -1,0 +1,33 @@
+services:
+  backend:
+    container_name: mvp-backend
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    environment:
+      APP_ENV: production
+      DATABASE_URL: sqlite:////data/app.db
+      API_PREFIX: /api
+      CORS_ORIGINS: http://localhost:8080
+    volumes:
+      - backend-data:/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    container_name: mvp-frontend
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  backend-data:

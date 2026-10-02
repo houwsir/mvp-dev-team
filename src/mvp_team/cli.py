@@ -53,6 +53,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         settings.dry_run = True
     if args.verify_frontend:
         settings.verify_frontend = True
+    if getattr(args, "no_smoke", False):
+        settings.run_smoke = False
     if args.max_qa_rounds is not None:
         settings.max_qa_rounds = args.max_qa_rounds
     if args.model:
@@ -105,18 +107,38 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.json:
         out = _json_summary(final, settings)
         print(json.dumps(out, ensure_ascii=False, indent=2))
-    return 0 if final.get("qa_passed") or (final.get("qa_round") or 0) > 0 else 1
+
+    # 退出码如实反映交付状态：dry-run 是演练，始终算成功
+    if settings.dry_run:
+        return 0
+    return 0 if final.get("delivery_status") == "ok" else 1
 
 
 def _print_summary(final: dict, settings: Settings) -> None:
     artifacts = final.get("artifacts", [])
     docs = final.get("docs_files", [])
+    scaffold = final.get("scaffold_files") or []
     unique = sorted({a.path for a in artifacts})
+
+    smoke = final.get("smoke_report") or {}
+    if not smoke or (smoke.get("facts") or {}).get("skipped"):
+        smoke_txt = "（未执行）"
+    else:
+        smoke_txt = "✅ 通过" if smoke.get("ok") else "❌ 未通过"
+
+    status = final.get("delivery_status") or "pending"
+    status_txt = {
+        "ok": "✅ 通过质量门",
+        "risk": "⚠️  未通过质量门（带风险交付）",
+    }.get(status, status)
+
     print(_c("─" * 72, "dim"))
     print(_c("  📊 交付汇总", "bold"))
     print(f"  项目代号：{final.get('project_name', '-')}")
     print(f"  质量门：{'✅ 放行' if final.get('qa_passed') else '❌ 未通过'}（共 {final.get('qa_round', 0)} 轮）")
-    print(f"  产出文件：{len(unique)} 个（其中文档 {len(docs)} 份）")
+    print(f"  冒烟测试：{smoke_txt}")
+    print(f"  交付状态：{status_txt}")
+    print(f"  产出文件：{len(unique)} 个（其中工程骨架 {len(scaffold)} 个、文档 {len(docs)} 份）")
     backend = final.get("backend_files") or []
     frontend = final.get("frontend_files") or []
     tests = final.get("test_files") or []
@@ -124,6 +146,8 @@ def _print_summary(final: dict, settings: Settings) -> None:
     print(f"    ⚙️ 后端 {len(backend)} 个 ｜ 🖥️ 前端 {len(frontend)} 个 ｜ 🔍 测试 {len(tests)} 个 ｜ 🚀 部署 {len(deploy)} 个")
     if settings.dry_run:
         print(_c("  注意：本次为 dry-run 演练，未调用真实模型。", "yellow"))
+    if status == "risk":
+        print(_c("  注意：本项目未通过质量门，详见 docs/DELIVERY_STATUS.md", "red"))
     print(_c("─" * 72, "dim"))
     for path in unique[:40]:
         print(f"    {path}")
@@ -137,9 +161,12 @@ def _json_summary(final: dict, settings: Settings) -> dict:
         "project_name": final.get("project_name"),
         "qa_passed": bool(final.get("qa_passed")),
         "qa_round": final.get("qa_round", 0),
+        "delivery_status": final.get("delivery_status", "pending"),
+        "smoke_passed": (final.get("smoke_report") or {}).get("ok"),
         "model": settings.model,
         "dry_run": settings.dry_run,
         "brief": final.get("brief"),
+        "contract": final.get("contract"),
         "test_report": final.get("test_report"),
         "files": sorted({a.path for a in final.get("artifacts", [])}),
         "events": [asdict(e) for e in final.get("events", [])],
@@ -159,9 +186,10 @@ def cmd_graph(_: argparse.Namespace) -> int:
     print()
     print(build_graph.__doc__ or "")
     print(_c("  拓扑文字说明见 src/mvp_team/graph.py 顶部注释", "dim"))
-    print("  " + " → ".join(name for name in ["START", "director_brief", "director_plan", "pm_analyze"]))
+    print("  " + " → ".join(["START", "director_brief", "director_plan", "pm_analyze", "scaffold_baseline"]))
     print("  ↑ 之后 {architect_design ∥ ui_design} → {backend_dev ∥ frontend_dev} → qa_test")
-    print("  ↑ qa_test 未通过则打回工程师返工，通过后 → devops_deploy → devops_docs → director_review → END")
+    print("  ↑ qa_test 四道证据：契约一致性 → 静态体检 → 真跑 pytest → 真启动服务冒烟")
+    print("  ↑ 未通过则打回工程师返工；通过或额度用尽后 → devops_deploy → devops_docs → director_review → END")
     print()
     return 0
 
@@ -182,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--model", default=None, help="覆盖环境变量中的模型名")
     run.add_argument("--max-qa-rounds", type=int, default=None, help="质量门最多返工轮数")
     run.add_argument("--verify-frontend", action="store_true", help="质量门里额外执行 npm install + build")
+    run.add_argument("--no-smoke", action="store_true", help="跳过冒烟门（不启动服务打接口）")
     run.add_argument("--dry-run", action="store_true", help="离线演练：不调用真实模型")
     run.add_argument("--json", action="store_true", help="额外输出 JSON 形式的运行摘要")
     run.add_argument("-v", "--verbose", action="store_true", help="异常时打印完整堆栈")

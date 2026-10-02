@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include requirements.txt
+include .env.example
+recursive-include src/mvp_team/scaffold *
+recursive-include scripts *.py
+recursive-include examples *.sh
+recursive-include docs *.md

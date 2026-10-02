@@ -70,9 +70,13 @@ class TeamState(TypedDict, total=False):
 
     # ---- 首席架构师 ----
     architecture: dict[str, Any]  # 技术方案：技术栈 / 数据模型 / API 契约
+    contract: dict[str, Any]      # 代码级契约：模块导出、fixture、环境变量、部署文件清单
 
     # ---- UI/UX 设计师 ----
     design: dict[str, Any]        # 设计规范：信息架构 / 页面布局 / 设计令牌
+
+    # ---- 工程骨架（确定性生成，工程师禁写）----
+    scaffold_files: list[FileArtifact]
 
     # ---- 工程师产物（单写入者，返工时整体替换）----
     backend_files: list[FileArtifact]
@@ -88,6 +92,8 @@ class TeamState(TypedDict, total=False):
     qa_passed: bool
     qa_round: int
     qa_feedback: Annotated[list[str], operator.add]
+    smoke_report: dict[str, Any]   # 冒烟门结论：真启动服务打接口的结果
+    delivery_status: str           # ok（过质量门）| risk（额度用尽带风险交付）
 
     # ---- 全局审计 ----
     artifacts: Annotated[list[FileArtifact], operator.add]
@@ -111,6 +117,7 @@ def new_state(idea: str, output_dir: str, project_name: str = "") -> TeamState:
         events=[],
         docs_files=[],
         run_log=[],
+        delivery_status="pending",
     )
 
 

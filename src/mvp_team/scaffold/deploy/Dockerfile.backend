@@ -1,0 +1,18 @@
+# 后端镜像。构建上下文是仓库根目录（docker-compose 中 context: ..）
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY backend/ /app/
+
+RUN mkdir -p /data
+ENV APP_ENV=production \
+    DATABASE_URL=sqlite:////data/app.db \
+    API_PREFIX=/api
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

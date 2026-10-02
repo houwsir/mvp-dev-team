@@ -23,6 +23,11 @@ generated/
 output/
 runs/
 
+# ---- 测试数据库残留 ----
+*.db
+*.db-shm
+*.db-wal
+
 # ---- Node（生成的前端产物）----
 node_modules/
 *.tsbuildinfo

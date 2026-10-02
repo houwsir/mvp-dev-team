@@ -34,6 +34,26 @@ mvp-team = "mvp_team.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# 工程骨架模板（src/mvp_team/scaffold/）里的非 .py 文件，需要显式声明才会进 wheel。
+# 注意：日常用法是 `pip install -e .` 或直接把 src 挂到 PYTHONPATH，
+# 这两种情况下模板目录始终在磁盘上，不受本配置影响。
+[tool.setuptools.package-data]
+"*" = [
+    "*.txt",
+    "*.json",
+    "*.md",
+    "*.sh",
+    "*.yml",
+    "*.yaml",
+    "*.conf",
+    "*.html",
+    "*.css",
+    "*.ts",
+    "*.tsx",
+    ".gitignore",
+    "Makefile",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

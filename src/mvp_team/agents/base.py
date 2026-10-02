@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -41,29 +42,44 @@ def artifact_for(path: Path, root: Path, role: str, project: str = "") -> FileAr
     )
 
 
+def _norm_rel(path: str) -> str:
+    """把模型写出的路径归一成相对项目根的 POSIX 形式，便于与骨架清单比对。"""
+    return path.strip().lstrip("/").removeprefix("./")
+
+
 def persist_generated(
     state: TeamState,
     text: str,
     role: str,
     allow=None,
+    forbid=None,
 ) -> tuple[list[FileArtifact], list[str]]:
     """把模型输出里的 ```file: 代码块写入项目目录。
 
-    ``allow`` 可选传入一个 (path) -> bool 的过滤器，用来限制某个角色只能写
-    自己该写的目录（例如测试工程师只允许写 ``backend/tests/``）。
+    * ``allow``：可选过滤器 ``(path) -> bool``，用来限制某个角色只能写自己该写的目录
+      （例如测试工程师只允许写 ``backend/tests/``）；
+    * ``forbid``：可选集合，列出**禁止覆盖**的路径（工程骨架文件）。
+
+    被拦截的写入不会落盘，而是作为告警返回，最终会出现在事件流里，便于审计。
     """
     root = project_dir(state)
     root.mkdir(parents=True, exist_ok=True)
     parsed = parse_file_blocks(text, role=role)
     warnings: list[str] = []
-    if allow is not None:
-        kept = []
-        for item in parsed:
-            if allow(item.path):
-                kept.append(item)
-            else:
-                warnings.append(f"越界写入被拦截：{item.path}")
-        parsed = kept
+    blocked = {_norm_rel(p) for p in (forbid or ())}
+
+    kept = []
+    for item in parsed:
+        rel = _norm_rel(item.path)
+        if allow is not None and not allow(item.path):
+            warnings.append(f"越界写入被拦截：{item.path}")
+            continue
+        if rel in blocked:
+            warnings.append(f"骨架文件受保护，已拦截覆盖：{item.path}")
+            continue
+        kept.append(item)
+    parsed = kept
+
     files, more_warnings = materialize(parsed, root, role=role, project=state.get("project_name", ""))
     return files, warnings + more_warnings
 
@@ -92,22 +108,80 @@ def role_label(role: str) -> str:
     return f"{p['emoji']} {p['title']}·{p['name']}"
 
 
+_REWORK_FILE_RE = re.compile(
+    r"((?:backend|frontend)/[A-Za-z0-9_./\-]+\.(?:py|ts|tsx|js|jsx|json|css|html|sh|yml|yaml|toml|md))"
+)
+
+
+def _rework_file_contents(body: str, root: Path, limit: int = 6, budget: int = 40_000) -> tuple[str, list[str]]:
+    """从缺陷清单里解析出被点名的文件，附上它们的当前内容。
+
+    这是返工能否收敛的关键：只给「文件清单」工程师看不到自己上一轮写了什么，
+    只能凭记忆重写，很容易改坏别处；给「当前内容」才能做定点修复。
+    """
+    picked: list[str] = []
+    for match in _REWORK_FILE_RE.finditer(body):
+        rel = match.group(1).removeprefix("./")
+        if rel not in picked and (root / rel).is_file():
+            picked.append(rel)
+    if not picked:
+        return "", []
+
+    chunks: list[str] = []
+    used = 0
+    attached: list[str] = []
+    for rel in picked[:limit]:
+        text = (root / rel).read_text(encoding="utf-8", errors="ignore")
+        if len(text) > 12_000:
+            text = text[:12_000] + "\n# ... [内容过长已截断]"
+        block = f"\n===== FILE: {rel} =====\n{text}\n"
+        if used + len(block) > budget:
+            break
+        chunks.append(block)
+        attached.append(rel)
+        used += len(block)
+    return "".join(chunks), attached
+
+
 def rework_block(state: TeamState, role: str) -> str:
-    """返工轮次里，把测试工程师的缺陷清单原文回灌给工程师。"""
+    """返工轮次里，把缺陷清单**连同被点名文件的当前内容**一起回灌给工程师。"""
     feedback = state.get("qa_feedback") or []
     if not feedback or (state.get("qa_round") or 0) == 0:
         return ""
     relevant = [f for f in feedback if role in f.lower() or "both" in f.lower()]
     body = "\n\n".join(relevant[-2:] if relevant else feedback[-2:])
-    existing = scan_tree(project_dir(state))
-    listing = "\n".join(f"- {p}" for p in existing[:80]) or "- （尚无文件）"
-    return (
-        "\n## ⚠️ 返工要求（本轮必须修复以下问题）\n"
-        f"{body}\n\n"
-        "## 当前磁盘上已有的文件\n"
-        f"{listing}\n\n"
-        "请只输出被修复的**完整文件**（覆盖旧版本），其余文件不要重复输出。\n"
-    )
+
+    root = project_dir(state)
+    contents, attached = _rework_file_contents(body, root)
+    listing = "\n".join(f"- {p}" for p in scan_tree(root, limit=80)) or "- （尚无文件）"
+
+    parts = [
+        "\n## ⚠️ 返工要求（本轮必须修复以下问题）\n",
+        body,
+        "\n",
+    ]
+    if contents:
+        parts += [
+            "\n## 📄 被点名文件的当前内容（磁盘上的真实版本）\n",
+            "请在下面这些内容的基础上**做定点修改**，不要凭空重写：\n",
+            contents,
+            "\n",
+        ]
+    else:
+        parts += [
+            "\n## 📄 未能定位到具体文件\n",
+            "请先根据上面的缺陷描述与文件清单，自行定位相关文件后再修改。\n",
+        ]
+    parts += [
+        "\n## 当前磁盘上已有的文件\n",
+        listing,
+        "\n\n",
+        "请只输出被修复的**完整文件**（覆盖旧版本），其余文件不要重复输出。\n",
+        "注意：工程骨架文件（`app/config.py`、`app/database.py`、`tests/conftest.py`、"
+        "`package.json`、`tsconfig.json`、`vite.config.ts`、`deploy/` 下的文件等）"
+        "**不可修改**，写入会被拦截。\n",
+    ]
+    return "".join(parts)
 
 
 # ---------------------------------------------------------------------------------------
@@ -215,7 +289,7 @@ def render_design_md(spec: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_test_report_md(report: dict[str, Any], pytest_output: str = "") -> str:
+def render_test_report_md(report: dict[str, Any], pytest_output: str = "", smoke_report: str = "") -> str:
     verdict = report.get("verdict", "unknown")
     lines = [
         "# 测试报告",
@@ -227,6 +301,8 @@ def render_test_report_md(report: dict[str, Any], pytest_output: str = "") -> st
         "",
     ]
     lines += [f"- [x] {x}" for x in report.get("executed", [])] or ["- （无）"]
+    if smoke_report:
+        lines += ["", "## 冒烟测试（真启动服务打接口）", "", smoke_report.strip(), ""]
     lines += ["", "## 缺陷清单", "", "| 严重度 | 位置 | 问题 | 建议修复 |", "| --- | --- | --- | --- |"]
     findings = report.get("findings", [])
     if findings:

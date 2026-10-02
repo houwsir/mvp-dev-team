@@ -81,6 +81,8 @@ class Settings:
     dry_run: bool = False           # 纯离线演练：不调用真实模型
     install_deps: bool = True       # 质量门前是否按产物 requirements.txt 安装依赖
     verify_frontend: bool = False   # 质量门里是否额外执行 npm install + build（慢，需联网）
+    run_smoke: bool = True          # 质量门里是否真启动服务做冒烟探测（判断「能不能跑起来」）
+    smoke_timeout: int = 60         # 冒烟时等待服务启动的上限（秒）
     request_timeout: int = 600
 
     # ---- 产物落盘 ----
@@ -110,6 +112,8 @@ class Settings:
             dry_run=_env_bool("MVP_DRY_RUN", False),
             install_deps=_env_bool("MVP_INSTALL_DEPS", True),
             verify_frontend=_env_bool("MVP_VERIFY_FRONTEND", False),
+            run_smoke=_env_bool("MVP_RUN_SMOKE", True),
+            smoke_timeout=_env_int("MVP_SMOKE_TIMEOUT", 60),
             request_timeout=_env_int("MVP_REQUEST_TIMEOUT", 600),
         )
 

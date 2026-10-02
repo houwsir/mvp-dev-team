@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from mvp_team.agents import architect, backend, designer, devops, director, frontend, pm, qa
+from mvp_team.agents import (
+    architect,
+    backend,
+    designer,
+    devops,
+    director,
+    frontend,
+    pm,
+    qa,
+    scaffold_node,
+)
 from mvp_team.prompts import PERSONAS
 
 # 团队花名册（顺序即汇报顺序）
@@ -21,9 +31,14 @@ ROSTER: list[tuple[str, str, str]] = [
 
 
 def build_nodes(llm: Any, settings: Any) -> dict[str, Callable[..., dict[str, Any]]]:
-    """返回 ``节点名 -> 节点函数`` 的映射。"""
+    """返回 ``节点名 -> 节点函数`` 的映射。
+
+    ``scaffold_node`` 不走模型，它在架构/设计开工前把工程基线铺好。
+    """
     nodes: dict[str, Callable[..., dict[str, Any]]] = {}
-    for module in (director, pm, architect, designer, backend, frontend, qa, devops):
+    for module in (
+        director, pm, scaffold_node, architect, designer, backend, frontend, qa, devops,
+    ):
         nodes.update(module.make_nodes(llm, settings))
     return nodes
 

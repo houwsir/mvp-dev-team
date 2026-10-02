@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from mvp_team.tools.contract_check import check_contract
+
 # ---------------------------------------------------------------- 路由 / 调用提取
 
 _BACKEND_ROUTE_RE = re.compile(
@@ -386,6 +388,12 @@ def check_project(root: Path, prd: dict[str, Any], arch: dict[str, Any]) -> dict
             findings.append(
                 _f("medium", "交付清单", f"{len(missing)} 个声明文件未产出：{missing[:8]}", "补齐缺失文件")
             )
+
+    # 9) 契约一致性（符号级导入 / fixture / 环境变量 / 骨架完整性）
+    #    这一类断裂会让 pytest 在收集阶段就中断，必须由确定性检查兜住，不能指望模型发现。
+    contract = check_contract(root, arch)
+    facts["contract"] = contract["facts"]
+    findings.extend(contract["findings"])
 
     return {"findings": findings, "facts": facts}
 
