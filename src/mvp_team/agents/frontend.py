@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from mvp_team.agents.base import ev, persist_generated, project_dir, rework_block, scan_tree
+from mvp_team.agents.base import (
+    declared_files_block,
+    ev,
+    persist_generated,
+    project_dir,
+    rework_block,
+    scan_tree,
+)
 from mvp_team.prompts import SYSTEM_FRONTEND, memory_block
 from mvp_team.state import Event, TeamState
 from mvp_team.tools.scaffold import skeleton_paths
@@ -25,6 +32,7 @@ def make_nodes(llm: Any, settings: Any) -> dict[str, Any]:
             + memory_block("UI/UX 设计规范（样式以此为准）", state.get("design"))
             + "\n## 磁盘上已存在的文件（工程骨架，不可修改）\n"
             + tree
+            + declared_files_block(state, "frontend/src/")
             + "\n\n请严格按上面的文件树确定自己的落点：只输出 `frontend/src/` 下的**业务文件**"
             "（App.tsx / pages/*.tsx / components/*.tsx / api/client.ts / types.ts / styles/*.css），"
             "不要重复输出 `package.json`、`tsconfig.json`、`vite.config.ts`、`index.html`、"
@@ -41,7 +49,8 @@ def make_nodes(llm: Any, settings: Any) -> dict[str, Any]:
                 ROLE,
                 "🖥️ 前端页面已实现",
                 detail=f"写入 {len(files)} 个文件，共 {sum(f.lines for f in files)} 行"
-                + (f"｜告警 {len(warnings)}" if warnings else ""),
+                + (f"｜告警 {len(warnings)}" if warnings else "")
+                + ("｜⚠️ 本轮未产出任何文件" if not files else ""),
                 status="warn" if warnings else "done",
                 data={"files": [f.path for f in files], "warnings": warnings},
             )
@@ -49,6 +58,18 @@ def make_nodes(llm: Any, settings: Any) -> dict[str, Any]:
         if warnings:
             update["events"].append(
                 Event(role=ROLE, title="🛡️ 骨架文件保护拦截", detail="；".join(warnings[:5]), status="warn")
+            )
+        if not files:
+            update["events"].append(
+                Event(
+                    role=ROLE,
+                    title="⚠️ 本轮未产出任何前端文件",
+                    detail=(
+                        "落盘协议没有解析出任何 ```file: 块。"
+                        "若这是返工轮，说明上一轮的缺陷没有被修复，质量门大概率会再次驳回。"
+                    ),
+                    status="warn",
+                )
             )
         update["artifacts"] = list(files)
         update["run_log"] = [f"[frontend] files -> {len(files)}"]

@@ -192,6 +192,87 @@ def test_rework_block_empty_without_feedback(tmp_path: Path):
     assert rework_block(state, "backend") == ""
 
 
+# --------------------------------------------------- 架构师声明清单的硬约束
+
+
+def test_declared_files_block_filters_by_prefix():
+    from mvp_team.agents.base import declared_files_block
+
+    state = {
+        "architecture": {
+            "directory_layout": [
+                "backend/app/models/bookmark.py",
+                "backend/app/services/bookmarks.py：书签业务逻辑",
+                "`frontend/src/pages/Home.tsx`",
+                "deploy/start.sh",
+            ]
+        }
+    }
+    backend_block = declared_files_block(state, "backend/app/")
+    assert "backend/app/models/bookmark.py" in backend_block
+    # 「路径 + 全角冒号 + 说明」要被归一化成纯路径
+    assert "- backend/app/services/bookmarks.py" in backend_block
+    assert "书签业务逻辑" not in backend_block
+    assert "frontend/src/pages/Home.tsx" not in backend_block
+    assert "硬约束：2 个" in backend_block
+
+    frontend_block = declared_files_block(state, "frontend/src/")
+    # 反引号包裹的路径也要被识别
+    assert "frontend/src/pages/Home.tsx" in frontend_block
+    assert "backend/app/models/bookmark.py" not in frontend_block
+
+
+def test_declared_files_block_empty_when_nothing_matches():
+    from mvp_team.agents.base import declared_files_block
+
+    assert declared_files_block({}, "backend/app/") == ""
+    assert declared_files_block({"architecture": {"directory_layout": []}}, "backend/app/") == ""
+    assert (
+        declared_files_block({"architecture": {"directory_layout": ["frontend/src/App.tsx"]}}, "backend/app/")
+        == ""
+    )
+
+
+# --------------------------------------------------- 产物计数（返工后不归零）
+
+
+def test_count_products_survives_rework_round_writing_nothing(tmp_path: Path):
+    """返工轮写了 0 个文件时，汇总不能显示成 0——要按磁盘实际内容统计。"""
+    from mvp_team.cli import _count_products
+
+    root = tmp_path / "out" / "demo"
+    write_scaffold(root)
+    # 模拟「第 1 轮写了文件、第 3 轮返工写了 0 个」
+    _write(root / "backend/app/models/bookmark.py", "class Bookmark: ...\n")
+    _write(root / "backend/app/services/bookmark_service.py", "def f(): ...\n")
+    _write(root / "backend/tests/test_bookmarks.py", "def test_x():\n    assert True\n")
+    _write(root / "frontend/src/pages/Home.tsx", "export default function Home() { return null }\n")
+
+    # 关键：最后一轮的 state 清单是空的（覆盖语义导致）
+    final = {
+        "output_dir": str(tmp_path / "out"),
+        "project_name": "demo",
+        "backend_files": [],
+        "frontend_files": [],
+        "test_files": [],
+    }
+    counted = _count_products(final)
+    assert counted["backend"] == 2, counted
+    assert counted["tests"] == 1, counted
+    assert counted["frontend"] >= 1, counted
+    # 骨架文件不计入业务类别
+    assert counted["backend"] < 2 + len(skeleton_paths())
+
+
+def test_count_products_returns_zeros_when_nothing_on_disk(tmp_path: Path):
+    from mvp_team.cli import _count_products
+
+    counted = _count_products(
+        {"output_dir": str(tmp_path / "nope"), "project_name": "x", "backend_files": []}
+    )
+    assert counted == {"backend": 0, "frontend": 0, "tests": 0, "deploy": 0}
+
+
 # ------------------------------------------------------------------ 冒烟选路
 
 

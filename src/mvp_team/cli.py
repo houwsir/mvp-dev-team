@@ -114,6 +114,44 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0 if final.get("delivery_status") == "ok" else 1
 
 
+def _count_products(final: dict) -> dict[str, int]:
+    """按类别统计**磁盘上真实存在**的产物数量。
+
+    为什么要扫盘而不是直接 ``len(state["backend_files"])``：
+    ``backend_files`` / ``frontend_files`` / ``test_files`` 在返工时会被**整体覆盖**，
+    所以「最后一轮某个角色写了 0 个文件」会让汇总显示成 0——
+    但磁盘上明明躺着前几轮写好的十几个文件。
+    真实运行里就出现过「后端 0 个」这种明显误导的汇总，故改为以磁盘为准。
+
+    受保护的骨架文件不计入任何业务类别（工程师并未创作它们）。
+    """
+    from mvp_team.agents.base import project_dir, scan_tree
+    from mvp_team.tools.scaffold import skeleton_paths
+
+    counts = {"backend": 0, "frontend": 0, "tests": 0, "deploy": 0}
+    try:
+        root = project_dir(final)
+    except Exception:  # noqa: BLE001 - 汇总打印不应因统计失败而中断
+        return counts
+
+    if not root.is_dir():
+        return counts
+
+    protected = skeleton_paths()
+    for rel in scan_tree(root, limit=2000):
+        if rel in protected:
+            continue
+        if rel.startswith("backend/tests/"):
+            counts["tests"] += 1
+        elif rel.startswith("backend/"):
+            counts["backend"] += 1
+        elif rel.startswith("frontend/"):
+            counts["frontend"] += 1
+        elif rel.startswith("deploy/") or rel in {"Makefile", "docker-compose.yml"}:
+            counts["deploy"] += 1
+    return counts
+
+
 def _print_summary(final: dict, settings: Settings) -> None:
     artifacts = final.get("artifacts", [])
     docs = final.get("docs_files", [])
@@ -139,11 +177,11 @@ def _print_summary(final: dict, settings: Settings) -> None:
     print(f"  冒烟测试：{smoke_txt}")
     print(f"  交付状态：{status_txt}")
     print(f"  产出文件：{len(unique)} 个（其中工程骨架 {len(scaffold)} 个、文档 {len(docs)} 份）")
-    backend = final.get("backend_files") or []
-    frontend = final.get("frontend_files") or []
-    tests = final.get("test_files") or []
-    deploy = final.get("deploy_files") or []
-    print(f"    ⚙️ 后端 {len(backend)} 个 ｜ 🖥️ 前端 {len(frontend)} 个 ｜ 🔍 测试 {len(tests)} 个 ｜ 🚀 部署 {len(deploy)} 个")
+    counted = _count_products(final)
+    print(
+        f"    ⚙️ 后端 {counted['backend']} 个 ｜ 🖥️ 前端 {counted['frontend']} 个 ｜ "
+        f"🔍 测试 {counted['tests']} 个 ｜ 🚀 部署 {counted['deploy']} 个"
+    )
     if settings.dry_run:
         print(_c("  注意：本次为 dry-run 演练，未调用真实模型。", "yellow"))
     if status == "risk":

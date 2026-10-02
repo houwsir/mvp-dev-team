@@ -143,6 +143,35 @@ def _rework_file_contents(body: str, root: Path, limit: int = 6, budget: int = 4
     return "".join(chunks), attached
 
 
+def declared_files_block(state: TeamState, prefix: str) -> str:
+    """把架构师声明的文件清单，按角色过滤成「必须全部产出」的硬要求。
+
+    真实运行中反复出现：架构师声明了 40 个业务文件，工程师只产出 17 个，
+    缺的那几个里就有被别处 import 的模块（例如 ``app/models/bookmark.py``），
+    于是服务在 import 阶段就崩了。所以这里把声明清单显式变成硬约束。
+    """
+    arch = state.get("architecture") or {}
+    layout = arch.get("directory_layout") or []
+    # 复用交付自检用的同一套路径归一化，避免「路径 + 全角冒号 + 说明」这类写法被漏掉
+    from mvp_team.tools.static_checks import _layout_path
+
+    mine = []
+    for raw in layout:
+        clean = _layout_path(raw) if isinstance(raw, str) else ""
+        if clean and clean.startswith(prefix) and not clean.endswith("/"):
+            mine.append(clean)
+    if not mine:
+        return ""
+    lines = "\n".join(f"- {p}" for p in mine)
+    return (
+        f"\n## 📌 架构师声明的文件清单（硬约束：{len(mine)} 个，必须全部产出）\n"
+        f"{lines}\n"
+        "上面这份清单**不是建议**。少产出一个文件，下游就可能 import 失败、服务直接起不来。\n"
+        "如果其中某个文件确实不必要，你也要**产出它**（可以是极薄的实现），"
+        "而不是省略——质量门会把「声明了却没产出」记为缺陷。\n"
+    )
+
+
 def rework_block(state: TeamState, role: str) -> str:
     """返工轮次里，把缺陷清单**连同被点名文件的当前内容**一起回灌给工程师。"""
     feedback = state.get("qa_feedback") or []
@@ -335,6 +364,7 @@ __all__ = [
     "ev",
     "role_label",
     "rework_block",
+    "declared_files_block",
     "write_text",
     "artifact_for",
     "render_prd_md",

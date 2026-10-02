@@ -183,6 +183,11 @@ def make_nodes(llm: Any, settings: Any) -> dict[str, Any]:
             f"冒烟 {'通过' if smoke_ok else '未通过'}｜pytest {'通过' if pytest_ok else '未通过'}｜"
             f"契约/静态 high {high_count} 项｜返工给 {data['rework_for']}"
         )
+        if not test_files:
+            # 测试工程师一份测试都没产出，是个独立且可操作的信号：
+            # 它不是「测试失败」，而是「根本没测」。必须显式喊出来，
+            # 否则容易被 pytest 的失败输出掩盖过去。
+            detail += "｜⚠️ 本轮未产出任何测试文件"
         update.update(
             ev(
                 ROLE,
@@ -210,6 +215,19 @@ def make_nodes(llm: Any, settings: Any) -> dict[str, Any]:
         if warnings:
             update["events"].append(
                 Event(role=ROLE, title="⚠️ 拦截越界写入", detail="；".join(warnings[:5]), status="warn")
+            )
+        if not test_files:
+            update["events"].append(
+                Event(
+                    role=ROLE,
+                    title="⚠️ 本轮未产出任何测试文件",
+                    detail=(
+                        "测试工程师的落盘协议没有解析出任何 ```file: 块。"
+                        "常见原因：模型只回了说明文字、输出被截断，或写到了 backend/tests/ 之外。"
+                        "pytest 因此「无测试可跑」，不等于代码通过。"
+                    ),
+                    status="warn",
+                )
             )
         return update
 
